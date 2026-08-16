@@ -170,6 +170,16 @@ void *tama_port_big_alloc(size_t size)
 static bool g_screen_dim = false;
 static int  ui_brightness = 100;
 
+/* Manual screen sleep (room long-press). Runs on the LVGL task like every
+ * other port call; ui_tick clears it on the first input after the request. */
+static bool    g_force_sleep = false;
+static int64_t g_force_sleep_at = 0;
+void tama_port_screen_sleep(void)
+{
+    g_force_sleep = true;
+    g_force_sleep_at = esp_timer_get_time();
+}
+
 void tama_port_brightness(int pct)
 {
     ui_brightness = pct;
@@ -293,8 +303,17 @@ static void ui_tick(lv_timer_t *tmr)
     /* idle dim / wake (touch resets LVGL inactivity; knob/button set the flag) */
     int64_t now = esp_timer_get_time();
     uint32_t lv_idle = lv_disp_get_inactive_time(NULL);
-    bool active = (now - g_last_interact_us) < (int64_t)IDLE_DIM_MS * 1000
-                  || lv_idle < IDLE_DIM_MS;
+    if (g_force_sleep) {
+        /* input AFTER the sleep request wakes: knob/button via the interact
+         * stamp, touch when LVGL's inactivity is shorter than the elapsed
+         * time since the request */
+        uint32_t since_ms = (uint32_t)((now - g_force_sleep_at) / 1000);
+        if (g_last_interact_us > g_force_sleep_at || lv_idle < since_ms)
+            g_force_sleep = false;
+    }
+    bool active = !g_force_sleep
+                  && ((now - g_last_interact_us) < (int64_t)IDLE_DIM_MS * 1000
+                      || lv_idle < IDLE_DIM_MS);
     if (active && g_screen_dim)  { g_screen_dim = false; bsp_lcd_brightness_set(ui_brightness); }
     if (!active && !g_screen_dim) { g_screen_dim = true;  bsp_lcd_brightness_set(0); }
 

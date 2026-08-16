@@ -50,6 +50,8 @@ void tama_port_save_request(void);
 
 /* large buffer alloc: PSRAM on device, malloc in the sim */
 void *tama_port_big_alloc(size_t size);
+/* blank the screen now (same as the idle dim); any input wakes it */
+void tama_port_screen_sleep(void);
 
 /* Current pet-epoch, in seconds. Pet-epoch 0 is midnight of day 0, so
  * hour-of-day = (now/3600)%24 — the pet's wall clock and its life clock are

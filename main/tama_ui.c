@@ -1116,8 +1116,13 @@ void tama_ui_on_long_press(void)
 {
     switch (mode) {
     case MODE_ROOM:
-        if (sel >= 0) { icon_style(sel, false); sel = -1; }
-        tama_port_sfx(TSFX_BACK);
+        if (sel >= 0) {                 /* first long-press: clear selection */
+            icon_style(sel, false); sel = -1;
+            tama_port_sfx(TSFX_BACK);
+        } else {                        /* nothing selected: screen to sleep */
+            tama_port_sfx(TSFX_BACK);
+            tama_port_screen_sleep();
+        }
         break;
     case MODE_FEED:
     case MODE_STAT:

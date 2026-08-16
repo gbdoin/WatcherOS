@@ -43,6 +43,7 @@ void tama_port_sfx(int cue)          { (void)cue; }
 void tama_port_led_mood(int mood)    { (void)mood; }
 void tama_port_brightness(int pct)   { g_brightness = pct; }
 void tama_port_save_request(void)    {}
+void tama_port_screen_sleep(void)    {}
 void *tama_port_big_alloc(size_t n)  { return calloc(1, n); }
 
 static void flush_cb(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px)
