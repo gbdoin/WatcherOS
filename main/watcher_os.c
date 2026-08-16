@@ -1119,6 +1119,24 @@ void app_main(void)
     esp_io_expander_handle_t io = bsp_io_expander_init();
     assert(io != NULL);
     bsp_rgb_init();
+    /* --- boot LED test: cycle distinct colors as visible proof of a fresh flash.
+     * Runs synchronously here, before fx_task starts, so nothing else touches
+     * the RGB LED during the sequence. Remove once flashing is confirmed. */
+    {
+        static const uint8_t seq[][3] = {
+            {90, 0, 0}, {0, 90, 0}, {0, 0, 90},     /* red, green, blue   */
+            {90, 90, 0}, {0, 90, 90}, {90, 0, 90},  /* yellow, cyan, magenta */
+            {90, 90, 90},                           /* white              */
+        };
+        for (int rep = 0; rep < 3; rep++) {
+            for (int i = 0; i < (int)(sizeof(seq) / sizeof(seq[0])); i++) {
+                bsp_rgb_set(seq[i][0], seq[i][1], seq[i][2]);
+                vTaskDelay(pdMS_TO_TICKS(250));
+            }
+        }
+        bsp_rgb_set(0, 0, 0);
+        ESP_LOGI(TAG, "boot LED color-cycle done");
+    }
     /* LVGL draw buffer in INTERNAL DMA RAM (not PSRAM): a PSRAM DMA buffer
      * feeding the QSPI LCD stalls the flush (hang ~28s in). Partial buffers
      * (48 lines, double) keep it small enough to fit internal RAM. */
