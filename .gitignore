@@ -1,14 +1,18 @@
+
+# simulator build artifacts (keep sim/*.c, lv_conf.h, *.sh, *.py and docs/*.png)
+*.bak
+.claude/
 build/
+dependencies.lock
+main/secrets.h
 managed_components/
 sdkconfig
 sdkconfig.old
-dependencies.lock
-*.bak
-.claude/
-main/secrets.h
 secrets.h
-
-# simulator build artifacts (keep sim/*.c, lv_conf.h, *.sh, *.py and docs/*.png)
-sim/sim
 sim/*.565
 sim/out_*
+sim/sim
+sim/sim_life
+sim/sim_screens
+sim/sim_sprites
+tools/__pycache__/
