@@ -26,14 +26,19 @@
  *    a missed call re-raises itself (repeat calls, like the original).
  *  - Bedtime forgives open calls without a mistake (hearts freeze all
  *    night anyway); the only nighttime mistake is leaving the lights on.
- *  - The stage's one random sickness rolls at deterministic points: each
- *    morning wake (1 in 8) and each daytime care mistake (1 in 4). No
- *    schedule field exists for it, and rolling at event points keeps
- *    replays reproducible.
+ *  - Two kinds of mistake: NEGLECT (an empty need or the lights left on
+ *    past the window) counts for life — lifetime neglect is what kills an
+ *    adult and shortens old age. An IGNORED DISCIPLINE call shapes only
+ *    the evolution branch (stage_mistakes); nobody dies of bad manners.
+ *  - Sickness: adults roll the stage's one random illness each morning
+ *    wake (1 in 8). Younger pets only fall ill from filth (poop) or
+ *    outright neglect — a mistake landing while EVERY need is empty
+ *    (1 in 4). Rolling at event points keeps replays reproducible.
  *  - Sick pets still eat (the contract says snacks are always accepted);
  *    medicine works even while asleep so a night illness is treatable.
- *  - Old age is a morning roll with rising odds from day 12 (~12 days
- *    + a random few, without needing a stored lifespan).
+ *  - Old age is a morning roll with rising odds past a natural lifespan
+ *    that care determines: a spotless life reaches the secret threshold
+ *    (16 days), a decent one 14, a sloppy one fades from day 12.
  */
 
 #include <string.h>
@@ -317,17 +322,24 @@ static void make_sick(tama_state_t *s, uint32_t t, bool poop_induced,
     *ev |= TEV_GOT_SICK | TEV_STATE_DIRTY;
 }
 
-static void care_mistake(tama_state_t *s, uint32_t t, uint32_t *ev)
+/* `neglect` marks a mistake of physical care (empty need, lights on all
+ * night): those count for life. An ignored discipline call only shapes
+ * the evolution branch — nobody dies of bad manners. */
+static void care_mistake(tama_state_t *s, uint32_t t, bool neglect,
+                         uint32_t *ev)
 {
-    sat_inc_u8(&s->care_mistakes);   /* plain uint8_t locals-of-struct:  */
+    if (neglect)                     /* plain uint8_t locals-of-struct:  */
+        sat_inc_u8(&s->care_mistakes);
     sat_inc_u8(&s->stage_mistakes);  /* single-byte members are align-1, */
                                      /* safe to address even when packed */
     *ev |= TEV_CARE_MISTAKE | TEV_STATE_DIRTY;
 
-    /* neglect can bring on the stage's one random illness (daytime only:
-     * the only overnight mistake is lights-on, and waking the user with
-     * a sickness they cannot see would be unfair) */
-    if (!(s->flags & (TF_ASLEEP | TF_SICK | TF_SICK_THIS_STAGE))
+    /* only outright neglect — every need empty at once — can bring on
+     * the young pet's illness (daytime only: the only overnight mistake
+     * is lights-on, and waking the user with a sickness they cannot see
+     * would be unfair) */
+    if (neglect && s->hunger == 0 && s->happy == 0
+        && !(s->flags & (TF_ASLEEP | TF_SICK | TF_SICK_THIS_STAGE))
         && s->stage >= TS_BABY && s->stage <= TS_SECRET
         && (rng_next(s) & 3u) == 0) {
         make_sick(s, t, false, ev);
@@ -478,20 +490,26 @@ static void on_wake(tama_state_t *s, uint32_t t, uint32_t *ev)
     /* a need left empty at bedtime starts calling again at once */
     recheck_attention(s, t, ev);
 
-    /* morning roll: the stage's one random sickness */
+    /* morning roll: the adult stage's one random sickness (younger pets
+     * only fall ill from filth or outright neglect — see care_mistake) */
     if (!(s->flags & (TF_SICK | TF_SICK_THIS_STAGE))
-        && s->stage >= TS_BABY && s->stage <= TS_SECRET
+        && (s->stage == TS_ADULT || s->stage == TS_SECRET)
         && (rng_next(s) & 7u) == 0) {
         make_sick(s, t, false, ev);
     }
 
-    /* morning roll: old age. Odds climb each day past the natural
-     * lifespan, so death lands ~12 days + a random few. */
-    if ((s->stage == TS_ADULT || s->stage == TS_SECRET)
-        && s->age_days >= OLD_AGE_DAYS) {
-        uint32_t over = (uint32_t)s->age_days - (OLD_AGE_DAYS - 1u);
-        if (rng_next(s) % 6u < over)
-            die(s, ev);
+    /* morning roll: old age. Odds climb each day past a natural lifespan
+     * that care determines — a spotless life reaches the secret threshold,
+     * a sloppy one fades from OLD_AGE_DAYS. */
+    if (s->stage == TS_ADULT || s->stage == TS_SECRET) {
+        uint32_t life = OLD_AGE_DAYS;
+        if (s->care_mistakes == 0)      life = OLD_AGE_DAYS + 4u;
+        else if (s->care_mistakes <= 2) life = OLD_AGE_DAYS + 2u;
+        if (s->age_days >= life) {
+            uint32_t over = (uint32_t)s->age_days - (life - 1u);
+            if (rng_next(s) % 6u < over)
+                die(s, ev);
+        }
     }
 }
 
@@ -572,12 +590,12 @@ static void on_attention_deadline(tama_state_t *s, uint32_t t, uint32_t *ev)
          * nightly mistake; if they're off this is just a stale call */
         if (!(s->flags & TF_LIGHTS_OFF) && !(s->flags & TF_NIGHT_MISTAKE)) {
             s->flags |= TF_NIGHT_MISTAKE;
-            care_mistake(s, t, ev);
+            care_mistake(s, t, true, ev);
         }
         return;
     }
 
-    care_mistake(s, t, ev);
+    care_mistake(s, t, kind != TATT_MISBEHAVE, ev);
     if (s->stage != TS_DEAD)
         recheck_attention(s, t, ev);   /* unmet needs keep calling */
 }
@@ -887,6 +905,22 @@ void tama_clock_rebase(tama_state_t *s, int32_t delta_s)
     TAMA_REBASE(sick_death_deadline);
     TAMA_REBASE(evolve_epoch);
 #undef TAMA_REBASE
+
+    /* Sleep/wake is derived from the anchor's wall-hour, which the shift
+     * just changed. If an awake pet's anchor now sits inside the sleep
+     * window, the "hatched at night" rule would replay a spurious
+     * sleep->wake pair (and a phantom day rollover) on the next tick;
+     * normalize by declaring the wake boundary after the anchor as the
+     * morning it woke on. Asleep pets need no guard — waking early after
+     * a clock change is the classic P1 time-cheat, kept on purpose. */
+    {
+        const tama_stage_params_t *p = cur_params(s);
+        if (!(s->flags & TF_ASLEEP) && stage_sleeps(p)) {
+            uint32_t a = sched_anchor(s);
+            if (in_sleep_hours(a, p))
+                s->last_wake_epoch = next_hour_epoch(a, p->wake_hour);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */

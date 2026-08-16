@@ -650,25 +650,29 @@ static void rebase_dir(run_ctx_t *c, int32_t delta, const char *T)
     t0   = c->now;
     base = c->s;
 
-    /* baseline: seconds from t0 until the next significant event */
+    /* baseline: seconds from t0 until the next state mutation of any
+     * kind (a plain TEV_STATE_DIRTY heart drop counts — teen+ stages go
+     * over an hour between "significant" events, and a dirty tick pins
+     * the pending interval just as precisely) */
     bl = base;
     for (dt = 1; dt <= 7200; dt++) {
-        ev = tama_tick(&bl, t0 + dt) & ~TEV_STATE_DIRTY;
+        ev = tama_tick(&bl, t0 + dt);
         if (ev != 0) { dt0 = dt; m0 = ev; break; }
     }
     REQUIRE(T, dt0 != 0,
-            "no baseline event within the 2h scan cap; raise the cap here "
-            "if stage intervals exceed 2h");
+            "no baseline mutation within the 2h scan cap; raise the cap "
+            "here if stage intervals exceed 2h");
 
-    /* rebase and replay: same relative timing expected */
+    /* rebase and replay: same relative timing expected, and the rebase
+     * itself must not make anything due (not even a dirty tick) */
     rb = base;
     tama_clock_rebase(&rb, delta);
     n0 = (uint32_t)((int64_t)t0 + (int64_t)delta);
 
-    ev = tama_tick(&rb, n0) & ~TEV_STATE_DIRTY;
+    ev = tama_tick(&rb, n0);
     REQUIRE(T, ev == 0, "event mask 0x%x fired at the rebase instant", ev);
     for (dt = 1; dt <= 7200; dt++) {
-        ev = tama_tick(&rb, n0 + dt) & ~TEV_STATE_DIRTY;
+        ev = tama_tick(&rb, n0 + dt);
         if (ev != 0) { dt1 = dt; m1 = ev; break; }
     }
     REQUIRE(T, dt1 != 0,
