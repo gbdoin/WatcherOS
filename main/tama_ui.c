@@ -40,7 +40,7 @@
 #define PET_XY     ((CANVAS_W - 32 * PET_SCALE) / 2)
 
 #define BG_HEX        0x101418
-#define BG_DARK_HEX   0x05060a  /* lights off at night */
+#define BG_DARK_HEX   0x020308  /* lights off: near-black night */
 #define BG_FLASH_HEX  0x232a3a  /* evolution strobe */
 #define PANEL_HEX     0x0a0c12  /* sub-screen backdrop = screen bg */
 #define TXT_HEX       0xe8ecf2
@@ -112,7 +112,7 @@ static lv_obj_t *game_opts[2], *game_opt_lbls[2], *game_dots[GAME_ROUNDS];
 
 /* ---- status screen ---- */
 static lv_obj_t *stat_scr, *stat_title, *stat_big, *stat_sub;
-static lv_obj_t *stat_bar, *stat_page_lbl;
+static lv_obj_t *stat_bar, *stat_dots[5];   /* [SP_COUNT] page pips */
 static lv_obj_t *stat_hearts[TAMA_MAX_HEARTS];
 static lv_img_dsc_t heart_dscs[TAMA_MAX_HEARTS];
 static lv_color_t *heart_bufs[TAMA_MAX_HEARTS];
@@ -230,7 +230,10 @@ static void icon_place(lv_obj_t *o, int i)
 
 static void icon_style(int i, bool selected)
 {
-    lv_obj_set_style_bg_color(tile_objs[i], lv_color_hex(ICONS[i].color), 0);
+    uint32_t col = ICONS[i].color;
+    if (i == 1 && state_valid() && tama_lights_off(&g_state))
+        col = 0x17150b;   /* bulb tile goes dark with the lights */
+    lv_obj_set_style_bg_color(tile_objs[i], lv_color_hex(col), 0);
     lv_obj_set_style_bg_opa(tile_objs[i], selected ? LV_OPA_COVER : LV_OPA_50, 0);
     lv_obj_set_style_border_width(tile_objs[i], selected ? 3 : 1, 0);
     lv_obj_set_style_border_color(tile_objs[i],
@@ -271,6 +274,12 @@ static void room_render(void)
     int  fr2 = (anim_cnt / ANIM_DIV) % 2;
 
     buf_fill(canvas_buf, CANVAS_W * CANVAS_H, dark ? BG_DARK_HEX : BG_HEX);
+    if (dark)   /* unmistakable night: big moon + stars, top-right */
+        blit_to(canvas_buf, CANVAS_W, CANVAS_H,
+                SPR_PROP_MOON, 0, CANVAS_W - 16 * 5 - 6, 6, 5);
+    /* the bulb tile mirrors the lights state too */
+    lv_obj_set_style_bg_color(tile_objs[1],
+        lv_color_hex(dark ? 0x17150b : ICONS[1].color), 0);
 
     if (state_valid()) {
         int poops = s->poop_count > TAMA_MAX_POOP ? TAMA_MAX_POOP : s->poop_count;
@@ -613,8 +622,9 @@ static void stat_render(void)
     show(stat_bar, bar);
     show(stat_big, big);
     show(stat_sub, sub);
-    snprintf(b, sizeof(b), "%d/%d", stat_page + 1, SP_COUNT);
-    lv_label_set_text(stat_page_lbl, b);
+    for (int i = 0; i < SP_COUNT; i++)
+        lv_obj_set_style_bg_color(stat_dots[i],
+            lv_color_hex(i == stat_page ? TXT_HEX : 0x2a2e36), 0);
 
     st_hunger = s->hunger;  st_happy = s->happy;
     st_disc = s->discipline; st_weight = s->weight; st_age = s->age_days;
@@ -941,7 +951,17 @@ void tama_ui_build(void)
     lv_obj_set_style_radius(stat_bar, 8, LV_PART_MAIN);
     lv_obj_set_style_bg_color(stat_bar, lv_color_hex(0x4c86c8), LV_PART_INDICATOR);
     lv_obj_set_style_radius(stat_bar, 8, LV_PART_INDICATOR);
-    stat_page_lbl = label_create(stat_scr, F16, DIM_HEX, LV_ALIGN_CENTER, 0, 145);
+    for (int i = 0; i < SP_COUNT; i++) {   /* dot pager (was "1/5" text —
+                                            * read as a score in live play) */
+        stat_dots[i] = lv_obj_create(stat_scr);
+        lv_obj_set_size(stat_dots[i], 12, 12);
+        lv_obj_set_style_radius(stat_dots[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(stat_dots[i], 0, 0);
+        lv_obj_clear_flag(stat_dots[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(stat_dots[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_align(stat_dots[i], LV_ALIGN_CENTER,
+                     (lv_coord_t)((i - (SP_COUNT - 1) / 2.0f) * 24), 145);
+    }
 
     /* --- clock panel --- */
     clock_scr = panel_create(scr);
