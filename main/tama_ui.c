@@ -1084,8 +1084,10 @@ void tama_ui_on_button(void)
         if (game_phase == GP_PICK) game_confirm_guess();
         break;   /* reveal/result phases run on their own timers */
     case MODE_STAT:
-        tama_port_sfx(TSFX_BACK);
-        set_mode(MODE_ROOM);
+        /* press pages forward (knob still works); long-press exits */
+        stat_page = (stat_page + 1) % SP_COUNT;
+        stat_render();
+        tama_port_sfx(TSFX_TICK_UP);
         break;
     case MODE_CLOCK:
         if (clk_phase == CLK_VIEW) {
