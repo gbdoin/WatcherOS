@@ -3,5 +3,6 @@ idf_component_register(
         "tama_main.c"
         "tama_ui.c"
         "tama_sfx.c"
+        "tama_sprites.c"
     INCLUDE_DIRS
         "")

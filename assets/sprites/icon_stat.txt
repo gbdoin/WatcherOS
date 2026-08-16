@@ -1,0 +1,22 @@
+// Status — bar chart
+size 16 16
+palette . transparent
+palette b 5aa2d8
+palette l 9ecbff
+frame
+................
+............ll..
+............ll..
+.......bb...ll..
+.......bb...ll..
+.......bb...ll..
+..ll...bb...ll..
+..ll...bb...ll..
+..ll...bb...ll..
+..ll...bb...ll..
+..ll...bb...ll..
+..ll...bb...ll..
+................
+................
+................
+................

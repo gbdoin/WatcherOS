@@ -31,9 +31,8 @@ def roundify(img, name):
     img.save(p)
     print("wrote", os.path.relpath(p, HERE))
 
-for src, name in [("out_radar.565","radar.png"),
-                  ("out_timer.565","timer.png"),
-                  ("out_wifi.565","wifi.png")]:
+for src, name in [("out_tama_egg.565","tama_egg.png"),
+                  ("out_tama_baby.565","tama_baby.png")]:
     s = os.path.join(HERE, src)
     if os.path.exists(s):
         roundify(load565(s), name)

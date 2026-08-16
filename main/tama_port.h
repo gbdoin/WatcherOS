@@ -27,10 +27,14 @@ enum {
     TLED_SLEEP,       /* faint blue breathing */
 };
 
+#include <stddef.h>
+
 void tama_port_sfx(int cue);
 void tama_port_led_mood(int mood);
 void tama_port_brightness(int pct);
 void tama_port_save_request(void);
+/* large buffer alloc: PSRAM on device, malloc in the sim */
+void *tama_port_big_alloc(size_t size);
 
 #ifdef __cplusplus
 }

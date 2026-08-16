@@ -93,6 +93,10 @@ void tama_port_sfx(int cue)        { tama_sfx_queue(cue); }
 void tama_port_led_mood(int mood)  { tama_sfx_led_mood(mood); }
 void tama_port_brightness(int pct) { bsp_lcd_brightness_set(pct); }
 void tama_port_save_request(void)  { /* Phase 2: NVS save */ }
+void *tama_port_big_alloc(size_t size)
+{
+    return heap_caps_aligned_alloc(16, size, MALLOC_CAP_SPIRAM);
+}
 
 /* ---------------- diagnostics task (Phase 0) ----------------
  * Battery percent does 10 ADC reads + log lines — poll every 30 s, off the

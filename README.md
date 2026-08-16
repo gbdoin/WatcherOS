@@ -1,74 +1,92 @@
-# WatcherOS
+# WatchaGotchi
 
-A small, extensible app framework for the **SenseCAP Watcher** (ESP32-S3 + round
-412×412 touch LCD, rotary knob, mic/speaker, RGB LED, Himax AI camera, WiFi).
-Built on ESP-IDF v5.2.1.
+A complete, original Tamagotchi-style virtual pet that **is** the firmware of a
+**SenseCAP Watcher** (ESP32-S3, round 412×412 touch LCD, rotary knob, speaker,
+RGB LED). Built on ESP-IDF v5.2.1 + LVGL 8.4. Faithful to the 1996 original's
+rules — hearts, discipline, poop, sickness, evolution branches, and yes, death —
+with original pixel-art characters and device-native charm (chirps, LED moods,
+a circular icon ring made for the round screen).
+
+> This repo previously held **WatcherOS** (radar/timer/WiFi apps). That code was
+> removed when the device was repurposed; see `docs/HANDOFF.md` and git history
+> (`git log --before=2026-08-16`) for the archaeology.
 
 ## Screenshots
-Rendered from the actual LVGL UI code by the headless simulator in [`sim/`](sim/)
-(no device photo — see [Simulator](#simulator)).
+Rendered by the headless simulator from the same `tama_ui.c` the device runs:
 
-| Radar (home) | Timer | WiFi |
-|:---:|:---:|:---:|
-| ![Radar](docs/radar.png) | ![Timer](docs/timer.png) | ![WiFi](docs/wifi.png) |
+| Egg | Baby (FEED selected) |
+|:---:|:---:|
+| ![Egg](docs/tama_egg.png) | ![Baby](docs/tama_baby.png) |
 
-## Apps
-- **Radar** *(home)* — live ATC-style flight radar. IP-geolocates the device, pulls nearby aircraft from the OpenSky Network, and plots each as a heading arrow (rotated by its true track) with callsign. Knob zooms the range (10/20/50/100/200 km); sweep + range rings; dims when data goes stale. Backlight sleeps after inactivity to save power.
-- **Timer** — knob sets the countdown (±30 s), press starts/cancels; progress arc + centered MM:SS; alarm beeps and the LED flashes when it elapses (fires even from another screen).
-- **WiFi** — scan nearby networks, pick one, enter the password, connect; credentials saved to NVS and auto-reconnect on boot. A **QR** button is wired for phone-QR provisioning (scan `WIFI:S:..;P:..;;` with the camera).
+## Status (phases)
+- ✅ **Phase 0** — Tamagotchi-only skeleton: icon ring, input, sfx/LED task, battery/RTC diagnostics
+- 🔨 **Phase 1** — sprite pipeline + simulator (in progress)
+- ⬜ **Phase 2** — core game loop (hunger/happy, feed, poop, save, clock)
+- ⬜ **Phase 3** — full lifecycle (sleep, discipline, sickness, game, evolution, death)
+- ⬜ **Phase 4** — polish (jingles, LED moods, cinematics, secret character)
+
+The full design + plan: `docs/HANDOFF.md`.
 
 ## Controls
-- **Swipe / tap** the touchscreen → switch between apps (LVGL `tileview`).
-- **Knob** → in-app adjustment only (e.g. timer duration).
-- **Button (press)** → app action (start/select). **Long-press** → back to Home.
+- **Knob** — rotate the selection around the icon ring
+- **Press** — activate / confirm
+- **Long-press** — back / cancel
+- Touch only wakes the dimmed screen (v1 is knob-driven, like the original's buttons)
 
-## Architecture (why it's stable)
-- The **LVGL task owns all UI**. Periodic work runs in an `lv_timer` (inside the
-  LVGL task) — never from an external loop grabbing the LVGL mutex. This avoids
-  the render-loop deadlock that plagued earlier attempts.
-- **Audio + LED live in `fx_task`** (fed by a queue / shared state) — never called
-  from the UI path, so nothing blocking stalls rendering.
-- **Input callbacks only set flags**; the `lv_timer` applies them. The knob is
-  burst-gated (rejects electrical phantom counts).
-- Add a function = write one `app_t { build, on_show, tick, on_knob, on_button }`
-  and register it in `APPS[]`.
+## Architecture (the rules that keep it stable)
+- **LVGL draw buffer in INTERNAL DMA RAM, never PSRAM** — a PSRAM draw buffer
+  stalls the QSPI flush and hangs the UI (~28 s in). See `bsp_display_cfg_t` in
+  `tama_main.c`. Sprite/canvas *source* buffers live in PSRAM (CPU-copied — fine).
+- **The LVGL task owns all UI**; one 80 ms `lv_timer` applies input flags and
+  drives animation. Input callbacks only set flags (knob is burst-gated).
+- **Audio + LED live in `fx_task`** (`tama_sfx.c`), queue-fed; I2S is stopped
+  when idle.
+- **Game logic is pure C** (`tama_logic.c`, no LVGL/ESP includes): the caller
+  injects pet-epoch seconds; every scheduled event is an absolute epoch, so
+  power-off = hibernation with zero catch-up code.
 
-## The critical fix: LVGL draw buffer must be in INTERNAL RAM
-The vendor `bsp_lvgl_init()` allocates the LVGL draw buffer in **PSRAM**. DMA-ing
-that PSRAM buffer to the QSPI LCD **stalls the flush**, hanging the UI ~28 s in
-(watchdog logs it; with panic off it just freezes). Fix — initialise with an
-internal DMA buffer:
-
-```c
-bsp_display_cfg_t dcfg = {
-    .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-    .buffer_size = 412 * 48,           /* partial buffers, fit internal RAM */
-    .double_buffer = true,
-    .flags = { .buff_dma = true, .buff_spiram = false },
-};
-lv_disp_t *disp = bsp_lvgl_init_with_cfg(&dcfg);   /* NOT bsp_lvgl_init() */
+## Layout
+```
+main/tama_main.c     device entry: BSP/LVGL/NVS init, input, diag, port impl
+main/tama_ui.c/h     ALL rendering (portable; runs on device AND in the sim)
+main/tama_logic.c/h  pure-C game state machine (portable, unit-testable)
+main/tama_sfx.c/h    fx task: tone synth jingles + LED moods
+main/tama_sprites.*  GENERATED sprite data — do not hand-edit
+main/tama_port.h     seam between portable code and the device/sim
+assets/sprites/*.txt ASCII pixel art (source of truth for all art)
+tools/spritegen.py   ASCII art -> tama_sprites.[ch]
+sim/                 headless PC simulator -> round PNGs in docs/
 ```
 
-## Build & flash
+## Build & flash (macOS)
+Requires the WCH CH34x VCP driver (the built-in macOS driver corrupts bulk
+writes — flashing fails without it). Toolchain: ESP-IDF v5.2.1 at `~/esp/esp-idf`,
+BSP clone at `~/esp/SenseCAP-Watcher-Firmware`.
+
 ```sh
 . ~/esp/esp-idf/export.sh
-idf.py set-target esp32s3
-idf.py -p /dev/ttyACM1 -b 460800 flash    # ttyACM1 is the console+flash port
+export CMAKE_POLICY_VERSION_MINIMUM=3.5   # cmake 4.x vs old rlottie component
+idf.py build
+idf.py -p /dev/cu.wchusbserial56D50556323 -b 460800 flash
 ```
-`main/idf_component.yml` references the SenseCAP Watcher BSP by absolute path
-(`/home/im/lab/SenseCAP-Watcher-Firmware/components/sensecap-watcher`).
+
+Don't `erase-flash` after Phase 2 — the pet's save lives in NVS.
+
+## Art pipeline
+Draw/edit ASCII art in `assets/sprites/*.txt`, then:
+```sh
+python3 tools/spritegen.py     # regenerates main/tama_sprites.[ch]
+```
 
 ## Simulator
-The screens above are rendered on a PC — no device or camera needed — by
-compiling the app's LVGL drawing against the LVGL 8.4 source and dumping the
-framebuffer to PNG. Handy for README shots and quick layout iteration.
-
 ```sh
 cd sim
-./build.sh        # gcc: links the LVGL sources + sim_main.c -> ./sim
-./sim             # renders each screen to out_*.565 (raw RGB565)
-python3 render.py # RGB565 -> round 412x412 PNGs in ../docs/
+./build.sh        # compiles the real tama_ui.c + LVGL 8.4 -> ./sim_screens
+./sim_screens     # renders scenes to out_*.565
+python3 render.py # -> round PNGs in ../docs/
 ```
-`sim/sim_main.c` reproduces each screen's exact LVGL calls (colors, radii,
-fonts, blip geometry) with representative data; `render.py` applies the round
-bezel mask.
+
+## Battery note
+The stock 3.7 V 400 mAh pack (model **403035**, JST ZH 1.5 mm 3-pin with NTC)
+reads *not present* on this unit — the device runs on USB-C only until the pack
+is re-seated or replaced. Details in `docs/HANDOFF.md`.
