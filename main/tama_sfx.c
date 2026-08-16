@@ -23,21 +23,32 @@
 static QueueHandle_t   snd_q;
 static volatile int    led_mood = TLED_OFF;
 
+static void led_step(void);
+
+/* Synthesize and write in ~50 ms slices, stepping the LED between slices:
+ * jingles run up to 1.3 s and the LED animation must not freeze for their
+ * whole duration. The static slice buffer also kills the per-note malloc. */
 static void play_tone(float f, int ms, int ampl)
 {
+    static int16_t b[SR / 20];            /* one 50 ms slice */
     int n = (SR * ms) / 1000;
-    int16_t *b = heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_DEFAULT);
-    if (!b) return;
     int env = SR / 100;
-    for (int i = 0; i < n; i++) {
-        float g = 1.0f;
-        if (i < env) g = (float)i / env;
-        else if (i > n - env) g = (float)(n - i) / env;
-        b[i] = (int16_t)(ampl * g * sinf(2.0f * (float)M_PI * f * i / SR));
+    int done = 0;
+    while (done < n) {
+        int chunk = n - done;
+        if (chunk > SR / 20) chunk = SR / 20;
+        for (int i = 0; i < chunk; i++) {
+            int j = done + i;
+            float g = 1.0f;
+            if (j < env) g = (float)j / env;
+            else if (j > n - env) g = (float)(n - j) / env;
+            b[i] = (int16_t)(ampl * g * sinf(2.0f * (float)M_PI * f * j / SR));
+        }
+        size_t w = 0;
+        bsp_i2s_write(b, chunk * sizeof(int16_t), &w, 500);
+        done += chunk;
+        led_step();
     }
-    size_t w = 0;
-    bsp_i2s_write(b, n * sizeof(int16_t), &w, 500);
-    free(b);
 }
 
 /* Note tables: freq 0 = rest (vTaskDelay, not a silent buffer — play_tone
@@ -83,8 +94,17 @@ static void play_cue(int cue)
     const note_t *n = cue_tab[cue].n;
     if (!n) return;
     for (int i = 0; i < cue_tab[cue].len; i++) {
-        if (n[i].freq) play_tone(n[i].freq, n[i].ms, cue_tab[cue].ampl);
-        else vTaskDelay(pdMS_TO_TICKS(n[i].ms));
+        if (n[i].freq) {
+            play_tone(n[i].freq, n[i].ms, cue_tab[cue].ampl);
+        } else {                          /* rest: keep the LED stepping */
+            int left = n[i].ms;
+            while (left > 0) {
+                int d = left > 50 ? 50 : left;
+                vTaskDelay(pdMS_TO_TICKS(d));
+                led_step();
+                left -= d;
+            }
+        }
     }
 }
 

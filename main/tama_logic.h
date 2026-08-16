@@ -131,9 +131,13 @@ uint32_t tama_tick(tama_state_t *s, uint32_t now);
 /* Apply a user action at `now`. Returns a TEV_* bitmask. */
 uint32_t tama_action(tama_state_t *s, tama_action_t a, uint32_t now);
 
-/* The user changed the wall clock by `delta_s` (new - old). Shifts every
- * scheduled epoch so pending intervals are preserved. */
-void tama_clock_rebase(tama_state_t *s, int32_t delta_s);
+/* The user changed the wall clock by `delta_s` (new - old); `now` is the
+ * NEW pet-epoch (post-shift). Shifts every scheduled epoch so pending
+ * intervals are preserved, then re-derives the sleep anchor against the
+ * new wall time so no phantom night is replayed — while keeping the P1
+ * time-cheats: setting the clock into the night puts the pet to sleep,
+ * setting an asleep pet's clock to morning wakes it. */
+void tama_clock_rebase(tama_state_t *s, int32_t delta_s, uint32_t now);
 
 /* Serialization: memcpy-with-validation. Returns false on bad magic/version
  * (caller starts a fresh egg). */

@@ -129,7 +129,9 @@ static lv_color_t *grave_buf;
 static tama_state_t g_state;          /* the live pet (magic==0 pre-egg) */
 static ui_mode_t mode = MODE_ROOM;
 static int  sel = -1;                 /* ring selection */
-static int  anim_cnt = 0;
+static uint32_t anim_cnt = 0;   /* unsigned: a signed /-then-% would go
+                                 * negative after ~5.4 years of uptime and
+                                 * index sprites out of bounds */
 static bool room_dirty = true;
 static uint32_t last_pet_now = 0;
 
@@ -176,7 +178,7 @@ static void blit_to(lv_color_t *buf, int bw, int bh,
                     int id, int fr, int dx, int dy, int scale)
 {
     const tama_sprite_t *s = &TAMA_SPRITES[id];
-    if (fr >= s->frames) fr = 0;
+    if (fr < 0 || fr >= s->frames) fr = 0;
     int ppb = 8 / s->bpp;
     int row_bytes = (s->w + ppb - 1) / ppb;
     const uint8_t *base = s->data + (size_t)fr * row_bytes * s->h;
@@ -394,7 +396,13 @@ static void handle_events(uint32_t ev, bool user_act)
         evolve_phase_drawn = -1;
         set_mode(MODE_EVOLVE);
         tama_port_sfx(TSFX_EVOLVE);
+        return;
     }
+    /* bedtime arriving mid-game aborts it (like long-press): the pending
+     * outcome would only be refused by the asleep gate, and a WIN! splash
+     * over a voided reward would lie to the player */
+    if ((ev & TEV_FELL_ASLEEP) && mode == MODE_GAME)
+        set_mode(MODE_ROOM);
 }
 
 static uint32_t do_action(tama_action_t a)
@@ -496,9 +504,15 @@ static void game_confirm_guess(void)
 static void game_finish(void)
 {
     bool win = (game_score >= GAME_WIN_NEED);
+    /* apply BEFORE celebrating: bedtime may have passed mid-game, and a
+     * WIN! splash over an asleep-refused reward would lie to the player */
+    uint32_t ev = do_action(win ? TA_GAME_WIN : TA_GAME_LOSE);
+    if (mode != MODE_GAME) return;    /* evolve/death/bedtime took over */
+    if (ev & TEV_REFUSED) {
+        set_mode(MODE_ROOM);
+        return;
+    }
     tama_port_sfx(win ? TSFX_WIN : TSFX_LOSE);
-    do_action(win ? TA_GAME_WIN : TA_GAME_LOSE);
-    if (mode != MODE_GAME) return;    /* the action triggered evolve/death */
     game_phase = GP_RESULT;
     game_wait = RESULT_TICKS;
     show(game_num, false);
@@ -669,7 +683,7 @@ static void clock_apply(void)
     switch (clk_purpose) {
     case CLKP_VIEW:
         /* rebase the pet FIRST so its pending intervals survive the shift */
-        tama_clock_rebase(&g_state, delta);
+        tama_clock_rebase(&g_state, delta, (uint32_t)((int64_t)now + delta));
         tama_port_clock_shift(delta);
         tama_port_save_request();
         tama_port_sfx(TSFX_CONFIRM);
@@ -687,8 +701,8 @@ static void clock_apply(void)
         break;
     }
     case CLKP_NEWEGG:
-        /* P1 authenticity: death -> clock-set -> fresh egg */
-        tama_clock_rebase(&g_state, delta);
+        /* P1 authenticity: death -> clock-set -> fresh egg. No rebase of
+         * the dead state: TA_NEW_EGG rewrites every field anyway. */
         tama_port_clock_shift(delta);
         tama_port_sfx(TSFX_CONFIRM);
         handle_events(tama_action(&g_state, TA_NEW_EGG, tama_port_now()), true);
@@ -960,6 +974,9 @@ void tama_ui_start(const uint8_t *blob, size_t len)
 {
     last_pet_now = tama_port_now();
     if (blob != NULL && tama_deserialize(&g_state, blob, len)) {
+        /* seed the evolve-"old" capture: an evolution due on the very
+         * first pet-second must not strobe against the EGG default */
+        room_spr = pet_sprite(&g_state);
         if (g_state.stage == TS_DEAD) enter_death();
         else set_mode(MODE_ROOM);
     } else {
@@ -1109,7 +1126,7 @@ void tama_ui_on_long_press(void)
 /* ---------------- 80 ms tick ---------------- */
 void tama_ui_tick(void)
 {
-    int prev_frame = anim_cnt / ANIM_DIV;
+    uint32_t prev_frame = anim_cnt / ANIM_DIV;
     anim_cnt++;
     bool frame_flip = (anim_cnt / ANIM_DIV) != prev_frame;
 

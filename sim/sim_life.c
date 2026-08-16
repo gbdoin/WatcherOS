@@ -666,8 +666,8 @@ static void rebase_dir(run_ctx_t *c, int32_t delta, const char *T)
     /* rebase and replay: same relative timing expected, and the rebase
      * itself must not make anything due (not even a dirty tick) */
     rb = base;
-    tama_clock_rebase(&rb, delta);
     n0 = (uint32_t)((int64_t)t0 + (int64_t)delta);
+    tama_clock_rebase(&rb, delta, n0);
 
     ev = tama_tick(&rb, n0);
     REQUIRE(T, ev == 0, "event mask 0x%x fired at the rebase instant", ev);
@@ -697,6 +697,65 @@ static void test_clock_rebase(void)
     }
     rebase_dir(&c, 6 * 3600, "clock_rebase_plus6h");
     rebase_dir(&c, -6 * 3600, "clock_rebase_minus6h");
+}
+
+/* Clock-sets that cross the sleep boundary: forward into the night must put
+ * the pet to sleep AT ONCE (P1 time-cheat; regression: the old anchor guard
+ * left it awake all night, starving it), and a set back into the previous
+ * daytime must leave an awake pet awake with no phantom rollover. */
+static void rebase_cross(run_ctx_t *c, uint32_t align_h, int32_t delta,
+                         bool expect_asleep, const char *T)
+{
+    tama_state_t rb;
+    uint32_t n0, ev;
+
+    REQUIRE(T, align_to_hour(c, align_h), "pet died aligning to %02u:00",
+            (unsigned)align_h);
+    REQUIRE(T, !tama_is_asleep(&c->s), "pet unexpectedly asleep at %02u:00",
+            (unsigned)align_h);
+
+    rb = c->s;
+    n0 = (uint32_t)((int64_t)c->now + (int64_t)delta);
+    tama_clock_rebase(&rb, delta, n0);
+    ev = tama_tick(&rb, n0);
+
+    if (expect_asleep) {
+        REQUIRE(T, (ev & TEV_FELL_ASLEEP) != 0,
+                "no TEV_FELL_ASLEEP after setting the clock into the night "
+                "(ev=0x%x, asleep=%d)", ev, tama_is_asleep(&rb) ? 1 : 0);
+        REQUIRE(T, tama_is_asleep(&rb), "TEV_FELL_ASLEEP but pet not asleep");
+        REQUIRE(T, (ev & (TEV_WOKE | TEV_DAY_ROLLOVER | TEV_DIED)) == 0,
+                "phantom wake/rollover replayed with the sleep (ev=0x%x)", ev);
+    } else {
+        REQUIRE(T, !tama_is_asleep(&rb),
+                "pet fell asleep after a set landing in daytime (ev=0x%x)", ev);
+        REQUIRE(T, (ev & (TEV_FELL_ASLEEP | TEV_WOKE | TEV_DAY_ROLLOVER
+                          | TEV_DIED)) == 0,
+                "phantom sleep/wake replayed at the set instant (ev=0x%x)", ev);
+    }
+    t_pass(T);
+}
+
+static void test_clock_rebase_cross_bed(void)
+{
+    run_ctx_t c;
+    run_bot(&c, "rebasebed", SEED_REBASE, bot_perfect, 2.0, 60);
+    if (c.s.stage == TS_DEAD) {
+        t_fail("clock_rebase_into_night", "pet died during the 2-day warmup");
+        t_fail("clock_rebase_back_to_day", "pet died during the 2-day warmup");
+        return;
+    }
+    /* teen (sleep 21, wake 9): 10:00 +12h -> 22:00 = into the night */
+    rebase_cross(&c, 10, 12 * 3600, true, "clock_rebase_into_night");
+    /* fresh warmup: the first cross left the pet asleep mid-"day" */
+    run_bot(&c, "rebasebed", SEED_JUMP, bot_perfect, 2.0, 60);
+    if (c.s.stage == TS_DEAD) {
+        t_fail("clock_rebase_back_to_day", "pet died during the 2nd warmup");
+        return;
+    }
+    /* 19:00 -8h -> 11:00 = back into daytime; anchor (09:00-6h=03:00 wall)
+     * lands in the sleep window — the exact phantom-night case */
+    rebase_cross(&c, 19, -8 * 3600, false, "clock_rebase_back_to_day");
 }
 
 static void test_large_jump(void)
@@ -772,6 +831,7 @@ int main(int argc, char **argv)
     test_care_window();
     test_serialize();
     test_clock_rebase();
+    test_clock_rebase_cross_bed();
     test_large_jump();
     test_dirty_flag(); /* accumulated across every run above; keep last */
 

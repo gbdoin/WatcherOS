@@ -33,7 +33,13 @@ def roundify(img):
     ring.ellipse((1, 1, W-2, H-2), outline=(60, 60, 66, 255), width=3)
     return img
 
-srcs = sorted(glob.glob(os.path.join(HERE, "out_*.565")))
+# sim_screens writes its dumps to the process CWD; prefer those so running
+# the pair from any directory stays consistent, falling back to sim/.
+srcs = sorted(glob.glob(os.path.join(os.getcwd(), "out_*.565")))
+if not srcs and os.getcwd() != HERE:
+    srcs = sorted(glob.glob(os.path.join(HERE, "out_*.565")))
+    if srcs:
+        print("note: converting dumps from %s (none in CWD)" % HERE)
 if not srcs:
     raise SystemExit("no out_*.565 dumps found (run ./sim_screens first)")
 for src in srcs:

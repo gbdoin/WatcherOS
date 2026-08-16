@@ -1,6 +1,7 @@
 # WatchaGotchi — agent handoff
 
-Written 2026-08-16 so any agent (or human) can resume this project cold.
+Written 2026-08-16, updated 2026-08-16 (second session, remote container) so
+any agent (or human) can resume this project cold.
 
 ## What this project is
 The SenseCAP Watcher (ESP32-S3 + Himax, round 412×412 touch LCD, knob, speaker,
@@ -21,39 +22,55 @@ status and the hard-won operational gotchas.
 5. UI quality bar: commercially viable — no clipped text, no overlaps, nothing
    irrelevant on screen (Gabriel asked for this explicitly).
 
-## Phase status (updated 2026-08-16, end of session — READ THIS FIRST)
+## Phase status (updated 2026-08-16, session 2 — READ THIS FIRST)
 - **Phase 0 DONE** (commit `d0e1e66` + follow-ups): skeleton firmware flashed
   and verified on-device. Full chip erase was performed first (old NVS gone).
 - **Phase 1 DONE**: `tools/spritegen.py` + `sim/` pipeline proven end-to-end.
-  Full roster authored (28 sprites: 9 characters, 8 ring icons, 11 props),
-  validated, style-judged 28/28 — verdict + watch-list in `docs/ART-REVIEW.md`
-  (per Gabriel: watch-list intentionally NOT acted on; next session's call).
-  Contact sheet: `docs/sprite_sheet.png`. After any art change:
-  `python3 tools/spritegen.py`, rebuild sim AND firmware.
-- **Phase 2 PARTIALLY DONE — resume exactly here:**
-  - `main/tama_logic.h` — the binding API contract (written, reviewed).
-  - `main/tama_logic.c` — full implementation, compiles clean
-    (`cc -c -std=c99 -Wall -Wextra main/tama_logic.c -I main`).
-  - `sim/sim_life.c` + `sim/build_life.sh` — care-bot test harness
-    (perfect/neglect/snack-spam/no-discipline bots + invariant assertions),
-    syntax-checks against the header.
-  - **NEVER RUN: the integrate step.** A workflow (impl + tests in parallel,
-    then a fix-until-green integrator) was stopped by Gabriel right before the
-    integrator started — impl and tests were written by SEPARATE agents and
-    have never been linked or executed together. **Next agent's first command:**
-    `cd sim && bash build_life.sh && ./sim_life` — then fix link errors and
-    test failures until all PASS (judge impl-vs-test disagreements against the
-    rules in docs/PLAN.md; prefer fixing whichever violates the plan; tune
-    stage_params toward P1 feel rather than weakening tests).
-  - Also still missing from Phase 2: clock module + NVS save/load in
-    `tama_main.c` (tama_port_save_request is a stub), wiring tama_logic into
-    tama_ui (the UI still runs a Phase 1 demo: button toggles egg/baby),
-    feed/status/clock-set/toilet screens.
-- **Phase 3**: sleep/lights UI, attention/discipline, sickness, higher-lower
-  game, evolution/death cinematics wiring, death→new egg. `TAMA_TIME_SCALE`
-  debug flag for live demos.
-- **Phase 4**: jingle set, LED moods wired to game events, secret character,
-  battery status page, final fresh-user walkthrough.
+  Full roster authored (28 sprites), style-judged 28/28 — verdict + watch-list
+  in `docs/ART-REVIEW.md`. Session 2 reviewed the watch-list and left it as-is
+  (all three items were judged acceptable and look fine in the new renders).
+  **Frame semantics matter:** 4-frame pets are idle/idle/EAT/SLEEP — the UI
+  alternates 0/1 for idle, shows 2 while eating, 3 while asleep.
+  After any art change: `python3 tools/spritegen.py`, rebuild sim AND firmware.
+- **Phase 2 DONE (code + sim-verified)**: the stalled integrate step was run
+  first — `sim_life` linked on the first try, 5 failures judged against
+  docs/PLAN.md and fixed (see commit `4e9ac2b`: care-scaled old age, neglect
+  vs discipline mistake split, adult-only random sickness, rebase anchor
+  guard). Now 12/12 PASS. Clock module + NVS save/load + factory reset live
+  in `tama_main.c`; the full game UI is wired in `tama_ui.c`.
+- **Phase 3 DONE (code + sim-verified)**: sleep/lights, attention/discipline,
+  sickness/medicine, higher-lower game, evolution branches + cinematic,
+  death → clock-set → new egg (P1-style), `TAMA_TIME_SCALE` demo flag
+  (`TAMA_TIME_SCALE=60 idf.py build` via root CMakeLists env hook).
+- **Phase 4 CODE-COMPLETE**: 14-cue jingle table in `tama_sfx.c`, LED moods
+  driven from state each tick, secret character path, battery status page.
+  **Remaining Phase 4 work is on-device only** — see the checklist below.
+- **Session 2 could not touch the device** (remote container; no ESP-IDF —
+  the toolchain host dl.espressif.com is blocked by network policy). All
+  portable code is verified through the sim; `tama_main.c`/`tama_sfx.c` were
+  syntax-checked against stub headers mirroring the real BSP signatures
+  (real header cross-checked from a clone of Seeed-Studio/
+  sensecap-watcher-firmware) but have NEVER been compiled by ESP-IDF.
+
+## Device checklist for the next Mac session (in order)
+1. `idf.py build` — first real compile of the new `tama_main.c` / `tama_ui.c`
+   / `tama_sfx.c`. Expect at most small fixes (stub-checked, not IDF-checked).
+2. Flash WITHOUT erase (`idf.py -p /dev/cu.wchusbserial56D50556323 -b 460800
+   flash`). First boot should show SET CLOCK; confirm → egg; 5 min → hatch.
+3. Walk every flow: feed (meal refuse at 4 hearts), game, status pages,
+   clock re-set (±hours; pet must not sleep/wake spuriously), scold during a
+   misbehave call, WC, meds while sick.
+4. Reboot mid-life → pet resumes; power-pull → ≤1 pet-minute lost.
+5. Factory reset gesture: hold knob while plugging in (watch for the
+   `factory reset` log banner). Verify bsp_knob_btn_init that early in boot
+   actually reads the pressed level — this is the least-certain device code.
+6. Idle dim: screen off after 60 s, touch wakes it back to the UI-chosen
+   brightness (5% while asleep+lights-off, not 100%).
+7. Audio pass: TSFX_CALL (2093 Hz @ amp 9000) may be harsh on the small
+   speaker — tune amplitudes by ear.
+8. Demo build `TAMA_TIME_SCALE=60 idf.py build` for a fast lifecycle demo,
+   then a real-time overnight soak (watchdog, heap, save cadence).
+9. `docs/PLAN.md` pixel-parity check: sim PNGs vs device (LV_COLOR_16_SWAP).
 
 ## Non-obvious technical facts (violate these and the device hangs/bricks UX)
 - LVGL draw buffer MUST be internal DMA RAM (`.buff_spiram=false`); PSRAM draw
@@ -96,28 +113,35 @@ status and the hard-won operational gotchas.
 - No fuel gauge on this board — cycle counts are unrecoverable by design.
 - No accelerometer / ambient-light sensor. BLE stack not compiled in.
 
-## Exact state at session end (2026-08-16, verified vs assumed)
-- **VERIFIED: firmware builds clean** after regenerating sprites
-  (`watcher_os.bin` 0xa2080 bytes; the generated-header comment bug — a `/*`
-  inside the header comment tripping `-Werror=comment` — was fixed in
-  `tools/spritegen.py` and `main/tama_sprites.[ch]` were regenerated).
-- **VERIFIED: `tama_logic.c` compiles** (`cc -c -std=c99 -Wall -Wextra`) and
-  `sim_life.c` syntax-checks. **NOT verified: they have never been linked or
-  run together** (the integrate step was cancelled — see Phase status above).
-- **NOT current: `docs/tama_egg.png` / `docs/tama_baby.png`** — rendered
-  before the ring switched from text tiles to sprite icons. The final render
-  was aborted on purpose. To refresh: `cd sim && ./build.sh && ./sim_screens
-  && /usr/bin/python3 render.py`.
-- **Gotcha:** after sourcing ESP-IDF's `export.sh`, `python3` is the IDF venv
-  (no PIL) — run `render.py`/`spritegen.py` with `/usr/bin/python3` or in a
-  shell without the IDF env.
-- **NOT verified on-device:** the sprite-icon ring build has not been flashed;
-  the device still runs the Phase 0 text-tile build. Flash the current build
-  first thing (`idf.py -p /dev/cu.wchusbserial56D50556323 -b 460800 flash`).
-- Two orchestration workflows ran this session: sprite roster (completed;
-  verdicts in `docs/ART-REVIEW.md`) and logic TDD (impl + tests completed,
-  integrator cancelled before starting — Gabriel chose to stop rather than
-  wait; nothing was actually hung, deliverables landed on disk).
+## Exact state at end of session 2 (2026-08-16, verified vs assumed)
+- **VERIFIED (host): `sim_life` 12/12 PASS** — full P1 invariant suite:
+  perfect care → HERO → SECRET at day 14, neglect dies day 0, snack-spam
+  → fat FERAL adult, no-discipline survives, refuse-when-full, care window,
+  serialize round-trip, ±6h clock rebase, 24h large-jump determinism.
+- **VERIFIED (host): `sim_screens` SCENES: PASS** — drives the real
+  `tama_ui.c` through one continuous life (first-boot clock-set → egg →
+  hatch → feed → game → sickness → sleep → evolutions → death) and dumps
+  15 scenes → `docs/shots/*.png` (also embedded in the README). Every PNG
+  visually reviewed against the commercial-quality bar.
+- **VERIFIED (host, stub-only): `tama_main.c` + `tama_sfx.c` compile** under
+  gcc with stub headers mirroring the real BSP/IDF signatures. **NOT
+  verified: a real `idf.py build`** — this container cannot install ESP-IDF
+  (dl.espressif.com blocked). The device also still runs the Phase 0 build;
+  nothing from sessions 1-2 beyond Phase 0 has ever been flashed.
+- **Save format note:** NVS namespace `tama`, keys `blob` (76-byte
+  tama_state_t, versioned/validated by tama_deserialize) and `epoch` (u32
+  pet-epoch snapshot, written with every blob save + every 60 s). First-boot
+  epoch base = 30 days (pad so backwards clock-sets can't underflow).
+- **Sim environment (cloud containers):** LVGL 8.4.0 auto-found at
+  /workspace/lvgl/lvgl (sim/build.sh falls back: $LVGL env → Mac BSP path →
+  /workspace clone). Pillow needed for render.py (`pip3 install pillow`).
+- **Gotcha (Mac):** after sourcing ESP-IDF's `export.sh`, `python3` is the
+  IDF venv (no PIL) — run `render.py`/`spritegen.py` with `/usr/bin/python3`.
+- Three orchestration workflows ran in session 2: implementation fan-out
+  (UI rewrite / device main / sfx jingles / sim scenes — 4 agents, all
+  landed), and an adversarial verification pass (4 review dimensions, each
+  finding independently refute-tested); confirmed findings were fixed before
+  the final push. Session 1's workflows: sprite roster + logic TDD.
 
 ## Memory files (Claude-specific)
 `~/.claude/projects/-Users-gabrielbeaudoin-Development-watcheros/memory/` holds

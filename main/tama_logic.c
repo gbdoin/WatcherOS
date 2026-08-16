@@ -845,7 +845,10 @@ uint32_t tama_action(tama_state_t *s, tama_action_t a, uint32_t now)
 
     case TA_CLEAN:
         if (asleep) return ev | TEV_REFUSED;
-        if (s->poop_count == 0) return ev;   /* nothing to flush: no-op */
+        if (s->poop_count == 0)              /* nothing to flush: tell the
+                                              * UI so the press still gets
+                                              * an acknowledging deny cue */
+            return ev | TEV_REFUSED;
         s->poop_count = 0;
         s->oldest_poop_epoch = 0;
         ev |= TEV_CLEANED | TEV_STATE_DIRTY;
@@ -885,7 +888,7 @@ static uint32_t rebased_epoch(uint32_t e, int32_t delta)
     return (uint32_t)v;
 }
 
-void tama_clock_rebase(tama_state_t *s, int32_t delta_s)
+void tama_clock_rebase(tama_state_t *s, int32_t delta_s, uint32_t now)
 {
     if (s == NULL || delta_s == 0) return;
     /* per-field (no pointers into the packed struct): every nonzero
@@ -907,18 +910,24 @@ void tama_clock_rebase(tama_state_t *s, int32_t delta_s)
 #undef TAMA_REBASE
 
     /* Sleep/wake is derived from the anchor's wall-hour, which the shift
-     * just changed. If an awake pet's anchor now sits inside the sleep
-     * window, the "hatched at night" rule would replay a spurious
-     * sleep->wake pair (and a phantom day rollover) on the next tick;
-     * normalize by declaring the wake boundary after the anchor as the
-     * morning it woke on. Asleep pets need no guard — waking early after
-     * a clock change is the classic P1 time-cheat, kept on purpose. */
+     * just changed. Re-derive against the NEW wall time: if an awake pet's
+     * anchor landed inside the sleep window while the new clock says
+     * daytime, the "hatched at night" rule would replay a phantom
+     * sleep->wake pair (and a day rollover) for a night the pet actually
+     * lived awake — declare the current day's wake boundary as the morning
+     * it woke on instead. When the new clock says night, the anchor is
+     * left alone ON PURPOSE: the pending sleep fires immediately, i.e.
+     * setting the clock to bedtime puts the pet to sleep — the classic P1
+     * time-cheat, symmetric with the kept asleep->early-wake cheat. */
     {
         const tama_stage_params_t *p = cur_params(s);
-        if (!(s->flags & TF_ASLEEP) && stage_sleeps(p)) {
-            uint32_t a = sched_anchor(s);
-            if (in_sleep_hours(a, p))
-                s->last_wake_epoch = next_hour_epoch(a, p->wake_hour);
+        if (!(s->flags & TF_ASLEEP) && stage_sleeps(p)
+            && in_sleep_hours(sched_anchor(s), p)
+            && !in_sleep_hours(now, p)) {
+            uint32_t w = (now / SECS_PER_DAY) * SECS_PER_DAY
+                       + (uint32_t)p->wake_hour * SECS_PER_HOUR;
+            if (w > now) w = (w >= SECS_PER_DAY) ? w - SECS_PER_DAY : 1u;
+            s->last_wake_epoch = w;
         }
     }
 }

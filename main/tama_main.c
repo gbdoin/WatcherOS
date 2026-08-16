@@ -39,8 +39,13 @@
 
 static const char *TAG = "TAMA";
 
-/* ---------------- input: flags only, applied in ui_tick ---------------- */
-static volatile int      knob_steps = 0;
+/* ---------------- input: flags only, applied in ui_tick ----------------
+ * Every callback<->ui_tick channel is a monotonic counter with a single
+ * writer (the callback) drained by a reader-local "seen" counter: the knob
+ * callbacks run on a different task/core than the LVGL tick, and a shared
+ * read-modify-write (the old `knob_steps += dir` / `-=`) can lose detents. */
+static volatile uint32_t knob_fwd_cnt = 0;
+static volatile uint32_t knob_back_cnt = 0;
 static int               burst_n = 0;
 static int64_t           knob_last_ev = 0;
 #define KNOB_BURST_US    450000
@@ -57,7 +62,10 @@ static void knob_ev(int dir)
     if (now - knob_last_ev <= KNOB_BURST_US) burst_n++;
     else burst_n = 1;
     knob_last_ev = now;
-    if (burst_n >= KNOB_CONFIRM) knob_steps += dir;
+    if (burst_n >= KNOB_CONFIRM) {
+        if (dir > 0) knob_fwd_cnt++;
+        else         knob_back_cnt++;
+    }
 }
 static void knob_left_cb(void *a, void *d)  { knob_ev(-1); }
 static void knob_right_cb(void *a, void *d) { knob_ev(+1); }
@@ -114,20 +122,25 @@ static bool         s_blob_pending = false;
 #define TAMA_TIME_SCALE 1
 #endif
 
-static int64_t  boot_us = 0;
-static uint32_t base_epoch = 30u * 86400u;
+/* base_epoch is SIGNED 64-bit and unclamped: the UI has already applied its
+ * full rebase delta to every pet anchor before calling clock_shift, so a
+ * clamp here would silently desynchronize the platform clock from the pet.
+ * pet-now itself (base + scaled uptime) is clamped at the read. */
+static int64_t boot_us = 0;
+static int64_t base_epoch = 30 * 86400;
 
 uint32_t tama_port_now(void)
 {
-    return base_epoch + (uint32_t)(((esp_timer_get_time() - boot_us) / 1000000) * TAMA_TIME_SCALE);
+    int64_t e = base_epoch
+              + ((esp_timer_get_time() - boot_us) / 1000000) * TAMA_TIME_SCALE;
+    if (e < 0) e = 0;
+    if (e > (int64_t)UINT32_MAX) e = (int64_t)UINT32_MAX;
+    return (uint32_t)e;
 }
 
 void tama_port_clock_shift(int32_t delta_s)
 {
-    int64_t e = (int64_t)base_epoch + delta_s;
-    if (e < 0) e = 0;
-    if (e > (int64_t)UINT32_MAX) e = (int64_t)UINT32_MAX;
-    base_epoch = (uint32_t)e;
+    base_epoch += delta_s;
     /* persist promptly: an epoch-only save unless a blob is already queued */
     if (s_saver) xTaskNotifyGive(s_saver);
 }
@@ -197,9 +210,13 @@ static void saver_task(void *arg)
     }
 }
 
-/* Factory reset gesture: knob held while power is applied. Must run before
- * iot_button_create claims the pin; deinit after so input_init() can re-init
- * it cleanly. Key value is active-low; re-check ~50 ms later to debounce. */
+/* Factory reset gesture: knob held while power is applied. Key value is
+ * active-low; re-check ~50 ms later to debounce. NEVER call
+ * bsp_knob_btn_deinit here: in the BSP it deletes the SHARED PCA9535 io
+ * expander handle (which touch, battery/VBUS diag and the knob button all
+ * use) and leaves the freed pointer cached — instant use-after-free for
+ * the rest of the boot. bsp_knob_btn_init is idempotent (the expander
+ * handle is cached), so input_init's iot_button_create re-inits fine. */
 static void factory_reset_check(void)
 {
     bsp_knob_btn_init(NULL);
@@ -214,7 +231,6 @@ static void factory_reset_check(void)
                          esp_err_to_name(e1), esp_err_to_name(e2));
         }
     }
-    bsp_knob_btn_deinit(NULL);
 }
 
 /* ---------------- diagnostics task ----------------
@@ -252,9 +268,12 @@ static void diag_task(void *arg)
 static void ui_tick(lv_timer_t *tmr)
 {
     /* apply queued input */
-    int steps = knob_steps;
+    static uint32_t fwd_seen = 0, back_seen = 0;
+    uint32_t f = knob_fwd_cnt, b = knob_back_cnt;
+    int steps = (int)(f - fwd_seen) - (int)(b - back_seen);
+    fwd_seen = f;
+    back_seen = b;
     if (steps) {
-        knob_steps -= steps;
         int n = steps > 0 ? steps : -steps;
         if (n > 8) n = 8;
         for (int i = 0; i < n; i++) tama_ui_on_knob(steps > 0 ? +1 : -1);
