@@ -12,20 +12,31 @@ a circular icon ring made for the round screen).
 > (`git log --before=2026-08-16`) for the archaeology.
 
 ## Screenshots
-Rendered by the headless simulator from the same `tama_ui.c` the device runs:
+Rendered by the headless simulator from the same `tama_ui.c` the device runs —
+`sim_screens` plays one whole life (first boot → death) and dumps every screen:
 
-| Egg | Baby (FEED selected) |
-|:---:|:---:|
-| ![Egg](docs/tama_egg.png) | ![Baby](docs/tama_baby.png) |
+| First boot | Egg | Attention + poop | Feed |
+|:---:|:---:|:---:|:---:|
+| ![Set clock](docs/shots/01_setclock.png) | ![Egg](docs/shots/02_egg.png) | ![Attention](docs/shots/06_attention.png) | ![Feed](docs/shots/04_feed.png) |
+
+| Game | Status | Sick | Sleeping |
+|:---:|:---:|:---:|:---:|
+| ![Game](docs/shots/07_game.png) | ![Status](docs/shots/08_status.png) | ![Sick](docs/shots/11_sick.png) | ![Sleep](docs/shots/12_sleep.png) |
+
+| Evolving | Adult (HERO) | Death | Clock |
+|:---:|:---:|:---:|:---:|
+| ![Evolve](docs/shots/13_evolve.png) | ![Adult](docs/shots/14_adult.png) | ![Death](docs/shots/15_death.png) | ![Clock](docs/shots/10_clock.png) |
+
+The full set lives in `docs/shots/`.
 
 ## Status (phases)
 - ✅ **Phase 0** — Tamagotchi-only skeleton: icon ring, input, sfx/LED task, battery/RTC diagnostics
-- 🔨 **Phase 1** — sprite pipeline + simulator (in progress)
-- ⬜ **Phase 2** — core game loop (hunger/happy, feed, poop, save, clock)
-- ⬜ **Phase 3** — full lifecycle (sleep, discipline, sickness, game, evolution, death)
-- ⬜ **Phase 4** — polish (jingles, LED moods, cinematics, secret character)
+- ✅ **Phase 1** — sprite pipeline (28 sprites) + headless simulator
+- ✅ **Phase 2** — core game loop: hunger/happy, feed, poop/clean, NVS save, pet clock (code + sim-verified)
+- ✅ **Phase 3** — full lifecycle: sleep/lights, discipline, sickness, higher-lower game, evolution branches, death → new egg (code + sim-verified; `sim_life` bots prove every branch)
+- 🔶 **Phase 4** — polish: jingles, LED moods, cinematics, secret character, battery page all implemented; **on-device verification pending** (this container has no flash access — see `docs/HANDOFF.md` for the device checklist)
 
-The full design + plan: `docs/HANDOFF.md`.
+The full design + plan: `docs/PLAN.md`; current state + handoff: `docs/HANDOFF.md`.
 
 ## Controls
 - **Knob** — rotate the selection around the icon ring
@@ -70,7 +81,9 @@ idf.py build
 idf.py -p /dev/cu.wchusbserial56D50556323 -b 460800 flash
 ```
 
-Don't `erase-flash` after Phase 2 — the pet's save lives in NVS.
+Don't `erase-flash` after Phase 2 — the pet's save lives in NVS (namespace
+`tama`). Factory reset without erasing: **hold the knob while plugging in**.
+Demo build (1 real minute = 1 pet-hour): `TAMA_TIME_SCALE=60 idf.py build`.
 
 ## Art pipeline
 Draw/edit ASCII art in `assets/sprites/*.txt`, then:

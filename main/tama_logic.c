@@ -26,14 +26,19 @@
  *    a missed call re-raises itself (repeat calls, like the original).
  *  - Bedtime forgives open calls without a mistake (hearts freeze all
  *    night anyway); the only nighttime mistake is leaving the lights on.
- *  - The stage's one random sickness rolls at deterministic points: each
- *    morning wake (1 in 8) and each daytime care mistake (1 in 4). No
- *    schedule field exists for it, and rolling at event points keeps
- *    replays reproducible.
+ *  - Two kinds of mistake: NEGLECT (an empty need or the lights left on
+ *    past the window) counts for life — lifetime neglect is what kills an
+ *    adult and shortens old age. An IGNORED DISCIPLINE call shapes only
+ *    the evolution branch (stage_mistakes); nobody dies of bad manners.
+ *  - Sickness: adults roll the stage's one random illness each morning
+ *    wake (1 in 8). Younger pets only fall ill from filth (poop) or
+ *    outright neglect — a mistake landing while EVERY need is empty
+ *    (1 in 4). Rolling at event points keeps replays reproducible.
  *  - Sick pets still eat (the contract says snacks are always accepted);
  *    medicine works even while asleep so a night illness is treatable.
- *  - Old age is a morning roll with rising odds from day 12 (~12 days
- *    + a random few, without needing a stored lifespan).
+ *  - Old age is a morning roll with rising odds past a natural lifespan
+ *    that care determines: a spotless life reaches the secret threshold
+ *    (16 days), a decent one 14, a sloppy one fades from day 12.
  */
 
 #include <string.h>
@@ -317,17 +322,24 @@ static void make_sick(tama_state_t *s, uint32_t t, bool poop_induced,
     *ev |= TEV_GOT_SICK | TEV_STATE_DIRTY;
 }
 
-static void care_mistake(tama_state_t *s, uint32_t t, uint32_t *ev)
+/* `neglect` marks a mistake of physical care (empty need, lights on all
+ * night): those count for life. An ignored discipline call only shapes
+ * the evolution branch — nobody dies of bad manners. */
+static void care_mistake(tama_state_t *s, uint32_t t, bool neglect,
+                         uint32_t *ev)
 {
-    sat_inc_u8(&s->care_mistakes);   /* plain uint8_t locals-of-struct:  */
+    if (neglect)                     /* plain uint8_t locals-of-struct:  */
+        sat_inc_u8(&s->care_mistakes);
     sat_inc_u8(&s->stage_mistakes);  /* single-byte members are align-1, */
                                      /* safe to address even when packed */
     *ev |= TEV_CARE_MISTAKE | TEV_STATE_DIRTY;
 
-    /* neglect can bring on the stage's one random illness (daytime only:
-     * the only overnight mistake is lights-on, and waking the user with
-     * a sickness they cannot see would be unfair) */
-    if (!(s->flags & (TF_ASLEEP | TF_SICK | TF_SICK_THIS_STAGE))
+    /* only outright neglect — every need empty at once — can bring on
+     * the young pet's illness (daytime only: the only overnight mistake
+     * is lights-on, and waking the user with a sickness they cannot see
+     * would be unfair) */
+    if (neglect && s->hunger == 0 && s->happy == 0
+        && !(s->flags & (TF_ASLEEP | TF_SICK | TF_SICK_THIS_STAGE))
         && s->stage >= TS_BABY && s->stage <= TS_SECRET
         && (rng_next(s) & 3u) == 0) {
         make_sick(s, t, false, ev);
@@ -478,20 +490,26 @@ static void on_wake(tama_state_t *s, uint32_t t, uint32_t *ev)
     /* a need left empty at bedtime starts calling again at once */
     recheck_attention(s, t, ev);
 
-    /* morning roll: the stage's one random sickness */
+    /* morning roll: the adult stage's one random sickness (younger pets
+     * only fall ill from filth or outright neglect — see care_mistake) */
     if (!(s->flags & (TF_SICK | TF_SICK_THIS_STAGE))
-        && s->stage >= TS_BABY && s->stage <= TS_SECRET
+        && (s->stage == TS_ADULT || s->stage == TS_SECRET)
         && (rng_next(s) & 7u) == 0) {
         make_sick(s, t, false, ev);
     }
 
-    /* morning roll: old age. Odds climb each day past the natural
-     * lifespan, so death lands ~12 days + a random few. */
-    if ((s->stage == TS_ADULT || s->stage == TS_SECRET)
-        && s->age_days >= OLD_AGE_DAYS) {
-        uint32_t over = (uint32_t)s->age_days - (OLD_AGE_DAYS - 1u);
-        if (rng_next(s) % 6u < over)
-            die(s, ev);
+    /* morning roll: old age. Odds climb each day past a natural lifespan
+     * that care determines — a spotless life reaches the secret threshold,
+     * a sloppy one fades from OLD_AGE_DAYS. */
+    if (s->stage == TS_ADULT || s->stage == TS_SECRET) {
+        uint32_t life = OLD_AGE_DAYS;
+        if (s->care_mistakes == 0)      life = OLD_AGE_DAYS + 4u;
+        else if (s->care_mistakes <= 2) life = OLD_AGE_DAYS + 2u;
+        if (s->age_days >= life) {
+            uint32_t over = (uint32_t)s->age_days - (life - 1u);
+            if (rng_next(s) % 6u < over)
+                die(s, ev);
+        }
     }
 }
 
@@ -572,12 +590,12 @@ static void on_attention_deadline(tama_state_t *s, uint32_t t, uint32_t *ev)
          * nightly mistake; if they're off this is just a stale call */
         if (!(s->flags & TF_LIGHTS_OFF) && !(s->flags & TF_NIGHT_MISTAKE)) {
             s->flags |= TF_NIGHT_MISTAKE;
-            care_mistake(s, t, ev);
+            care_mistake(s, t, true, ev);
         }
         return;
     }
 
-    care_mistake(s, t, ev);
+    care_mistake(s, t, kind != TATT_MISBEHAVE, ev);
     if (s->stage != TS_DEAD)
         recheck_attention(s, t, ev);   /* unmet needs keep calling */
 }
@@ -827,7 +845,10 @@ uint32_t tama_action(tama_state_t *s, tama_action_t a, uint32_t now)
 
     case TA_CLEAN:
         if (asleep) return ev | TEV_REFUSED;
-        if (s->poop_count == 0) return ev;   /* nothing to flush: no-op */
+        if (s->poop_count == 0)              /* nothing to flush: tell the
+                                              * UI so the press still gets
+                                              * an acknowledging deny cue */
+            return ev | TEV_REFUSED;
         s->poop_count = 0;
         s->oldest_poop_epoch = 0;
         ev |= TEV_CLEANED | TEV_STATE_DIRTY;
@@ -867,7 +888,7 @@ static uint32_t rebased_epoch(uint32_t e, int32_t delta)
     return (uint32_t)v;
 }
 
-void tama_clock_rebase(tama_state_t *s, int32_t delta_s)
+void tama_clock_rebase(tama_state_t *s, int32_t delta_s, uint32_t now)
 {
     if (s == NULL || delta_s == 0) return;
     /* per-field (no pointers into the packed struct): every nonzero
@@ -887,6 +908,28 @@ void tama_clock_rebase(tama_state_t *s, int32_t delta_s)
     TAMA_REBASE(sick_death_deadline);
     TAMA_REBASE(evolve_epoch);
 #undef TAMA_REBASE
+
+    /* Sleep/wake is derived from the anchor's wall-hour, which the shift
+     * just changed. Re-derive against the NEW wall time: if an awake pet's
+     * anchor landed inside the sleep window while the new clock says
+     * daytime, the "hatched at night" rule would replay a phantom
+     * sleep->wake pair (and a day rollover) for a night the pet actually
+     * lived awake — declare the current day's wake boundary as the morning
+     * it woke on instead. When the new clock says night, the anchor is
+     * left alone ON PURPOSE: the pending sleep fires immediately, i.e.
+     * setting the clock to bedtime puts the pet to sleep — the classic P1
+     * time-cheat, symmetric with the kept asleep->early-wake cheat. */
+    {
+        const tama_stage_params_t *p = cur_params(s);
+        if (!(s->flags & TF_ASLEEP) && stage_sleeps(p)
+            && in_sleep_hours(sched_anchor(s), p)
+            && !in_sleep_hours(now, p)) {
+            uint32_t w = (now / SECS_PER_DAY) * SECS_PER_DAY
+                       + (uint32_t)p->wake_hour * SECS_PER_HOUR;
+            if (w > now) w = (w >= SECS_PER_DAY) ? w - SECS_PER_DAY : 1u;
+            s->last_wake_epoch = w;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */

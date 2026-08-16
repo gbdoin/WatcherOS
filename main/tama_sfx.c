@@ -23,31 +23,88 @@
 static QueueHandle_t   snd_q;
 static volatile int    led_mood = TLED_OFF;
 
+static void led_step(void);
+
+/* Synthesize and write in ~50 ms slices, stepping the LED between slices:
+ * jingles run up to 1.3 s and the LED animation must not freeze for their
+ * whole duration. The static slice buffer also kills the per-note malloc. */
 static void play_tone(float f, int ms, int ampl)
 {
+    static int16_t b[SR / 20];            /* one 50 ms slice */
     int n = (SR * ms) / 1000;
-    int16_t *b = heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_DEFAULT);
-    if (!b) return;
     int env = SR / 100;
-    for (int i = 0; i < n; i++) {
-        float g = 1.0f;
-        if (i < env) g = (float)i / env;
-        else if (i > n - env) g = (float)(n - i) / env;
-        b[i] = (int16_t)(ampl * g * sinf(2.0f * (float)M_PI * f * i / SR));
+    int done = 0;
+    while (done < n) {
+        int chunk = n - done;
+        if (chunk > SR / 20) chunk = SR / 20;
+        for (int i = 0; i < chunk; i++) {
+            int j = done + i;
+            float g = 1.0f;
+            if (j < env) g = (float)j / env;
+            else if (j > n - env) g = (float)(n - j) / env;
+            b[i] = (int16_t)(ampl * g * sinf(2.0f * (float)M_PI * f * j / SR));
+        }
+        size_t w = 0;
+        bsp_i2s_write(b, chunk * sizeof(int16_t), &w, 500);
+        done += chunk;
+        led_step();
     }
-    size_t w = 0;
-    bsp_i2s_write(b, n * sizeof(int16_t), &w, 500);
-    free(b);
 }
+
+/* Note tables: freq 0 = rest (vTaskDelay, not a silent buffer — play_tone
+ * would still malloc). Each jingle stays under ~1.5 s so queued cues drain. */
+typedef struct { int16_t freq; int16_t ms; } note_t;
+
+static const note_t seq_tick_up[] = {{1200, 26}};
+static const note_t seq_tick_dn[] = {{800, 26}};
+static const note_t seq_confirm[] = {{880, 70}, {1320, 90}};
+static const note_t seq_deny[]    = {{300, 120}};
+static const note_t seq_back[]    = {{600, 60}};
+static const note_t seq_eat[]     = {{500, 40}, {0, 20}, {420, 40}, {0, 20}, {500, 40}};
+static const note_t seq_clean[]   = {{1400, 45}, {1050, 45}, {750, 45}, {500, 45}};
+static const note_t seq_scold[]   = {{220, 90}, {0, 60}, {180, 140}};
+static const note_t seq_cure[]    = {{660, 80}, {990, 160}};
+static const note_t seq_call[]    = {{2093, 70}, {0, 60}, {2093, 70}};
+static const note_t seq_win[]     = {{523, 90}, {659, 90}, {784, 90}, {1047, 180}};
+static const note_t seq_lose[]    = {{392, 120}, {330, 120}, {262, 120}};
+static const note_t seq_evolve[]  = {{523, 110}, {523, 110}, {659, 110}, {784, 110},
+                                     {1047, 110}, {784, 110}, {1047, 320}};
+static const note_t seq_death[]   = {{440, 300}, {415, 300}, {392, 300}, {330, 400}};
+
+static const struct { const note_t *n; uint8_t len; int16_t ampl; } cue_tab[] = {
+    [TSFX_TICK_UP] = {seq_tick_up, 1, 6000},
+    [TSFX_TICK_DN] = {seq_tick_dn, 1, 6000},
+    [TSFX_CONFIRM] = {seq_confirm, 2, 8000},
+    [TSFX_DENY]    = {seq_deny,    1, 8000},
+    [TSFX_BACK]    = {seq_back,    1, 7000},
+    [TSFX_EAT]     = {seq_eat,     5, 7000},
+    [TSFX_CLEAN]   = {seq_clean,   4, 7000},
+    [TSFX_SCOLD]   = {seq_scold,   3, 8000},
+    [TSFX_CURE]    = {seq_cure,    2, 8000},
+    [TSFX_CALL]    = {seq_call,    3, 9000},
+    [TSFX_WIN]     = {seq_win,     4, 8000},
+    [TSFX_LOSE]    = {seq_lose,    3, 7000},
+    [TSFX_EVOLVE]  = {seq_evolve,  7, 8000},
+    [TSFX_DEATH]   = {seq_death,   4, 5000},  /* somber: low amplitude */
+};
 
 static void play_cue(int cue)
 {
-    switch (cue) {
-        case TSFX_TICK_UP: play_tone(1200, 26, 6000); break;
-        case TSFX_TICK_DN: play_tone(800, 26, 6000); break;
-        case TSFX_CONFIRM: play_tone(880, 70, 8000); play_tone(1320, 90, 8000); break;
-        case TSFX_DENY:    play_tone(300, 120, 8000); break;
-        case TSFX_BACK:    play_tone(600, 60, 7000); break;
+    if (cue < 0 || cue >= (int)(sizeof(cue_tab) / sizeof(cue_tab[0]))) return;
+    const note_t *n = cue_tab[cue].n;
+    if (!n) return;
+    for (int i = 0; i < cue_tab[cue].len; i++) {
+        if (n[i].freq) {
+            play_tone(n[i].freq, n[i].ms, cue_tab[cue].ampl);
+        } else {                          /* rest: keep the LED stepping */
+            int left = n[i].ms;
+            while (left > 0) {
+                int d = left > 50 ? 50 : left;
+                vTaskDelay(pdMS_TO_TICKS(d));
+                led_step();
+                left -= d;
+            }
+        }
     }
 }
 
