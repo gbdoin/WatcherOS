@@ -127,11 +127,17 @@ static bool         s_blob_pending = false;
  * clamp here would silently desynchronize the platform clock from the pet.
  * pet-now itself (base + scaled uptime) is clamped at the read. */
 static int64_t boot_us = 0;
+/* 64-bit loads/stores are not atomic on the S3: clock_shift (LVGL task) races
+ * the saver task's tama_port_now() read, so base_epoch is guarded. */
+static portMUX_TYPE s_clock_mux = portMUX_INITIALIZER_UNLOCKED;
 static int64_t base_epoch = 30 * 86400;
 
 uint32_t tama_port_now(void)
 {
-    int64_t e = base_epoch
+    taskENTER_CRITICAL(&s_clock_mux);
+    int64_t base = base_epoch;
+    taskEXIT_CRITICAL(&s_clock_mux);
+    int64_t e = base
               + ((esp_timer_get_time() - boot_us) / 1000000) * TAMA_TIME_SCALE;
     if (e < 0) e = 0;
     if (e > (int64_t)UINT32_MAX) e = (int64_t)UINT32_MAX;
@@ -140,7 +146,9 @@ uint32_t tama_port_now(void)
 
 void tama_port_clock_shift(int32_t delta_s)
 {
+    taskENTER_CRITICAL(&s_clock_mux);
     base_epoch += delta_s;
+    taskEXIT_CRITICAL(&s_clock_mux);
     /* persist promptly: an epoch-only save unless a blob is already queued */
     if (s_saver) xTaskNotifyGive(s_saver);
 }
