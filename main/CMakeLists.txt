@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
-        "watcher_os.c"
-        "isp.c"
+        "tama_main.c"
+        "tama_ui.c"
+        "tama_sfx.c"
     INCLUDE_DIRS
         "")
