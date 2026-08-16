@@ -265,7 +265,9 @@ static void room_render(void)
 {
     const tama_state_t *s = &g_state;
     bool asleep = state_valid() && tama_is_asleep(s);
-    bool dark = asleep && tama_lights_off(s);
+    /* lights-off darkens the room immediately (awake or not) — the toggle
+     * needs visible feedback; panel brightness still only drops in sleep */
+    bool dark = state_valid() && tama_lights_off(s);
     int  fr2 = (anim_cnt / ANIM_DIV) % 2;
 
     buf_fill(canvas_buf, CANVAS_W * CANVAS_H, dark ? BG_DARK_HEX : BG_HEX);
