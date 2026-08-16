@@ -36,7 +36,8 @@ status and the hard-won operational gotchas.
   first — `sim_life` linked on the first try, 5 failures judged against
   docs/PLAN.md and fixed (see commit `4e9ac2b`: care-scaled old age, neglect
   vs discipline mistake split, adult-only random sickness, rebase anchor
-  guard). Now 12/12 PASS. Clock module + NVS save/load + factory reset live
+  guard). Now 14/14 PASS (incl. two cross-bedtime clock-set regressions
+  added by the adversarial review). Clock/NVS/factory-reset live
   in `tama_main.c`; the full game UI is wired in `tama_ui.c`.
 - **Phase 3 DONE (code + sim-verified)**: sleep/lights, attention/discipline,
   sickness/medicine, higher-lower game, evolution branches + cinematic,
@@ -114,10 +115,12 @@ status and the hard-won operational gotchas.
 - No accelerometer / ambient-light sensor. BLE stack not compiled in.
 
 ## Exact state at end of session 2 (2026-08-16, verified vs assumed)
-- **VERIFIED (host): `sim_life` 12/12 PASS** — full P1 invariant suite:
+- **VERIFIED (host): `sim_life` 14/14 PASS** — full P1 invariant suite:
   perfect care → HERO → SECRET at day 14, neglect dies day 0, snack-spam
   → fat FERAL adult, no-discipline survives, refuse-when-full, care window,
-  serialize round-trip, ±6h clock rebase, 24h large-jump determinism.
+  serialize round-trip, ±6h clock rebase, cross-bedtime clock-sets (into
+  night sleeps at once; back to day replays no phantom night), 24h
+  large-jump determinism.
 - **VERIFIED (host): `sim_screens` SCENES: PASS** — drives the real
   `tama_ui.c` through one continuous life (first-boot clock-set → egg →
   hatch → feed → game → sickness → sleep → evolutions → death) and dumps
