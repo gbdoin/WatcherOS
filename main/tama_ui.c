@@ -277,6 +277,8 @@ static void room_render(void)
     if (dark)   /* unmistakable night: big moon + stars, top-right */
         blit_to(canvas_buf, CANVAS_W, CANVAS_H,
                 SPR_PROP_MOON, 0, CANVAS_W - 16 * 5 - 6, 6, 5);
+    else        /* daytime counterpart: sun, top-left */
+        blit_to(canvas_buf, CANVAS_W, CANVAS_H, SPR_PROP_SUN, 0, 6, 6, 5);
     /* the bulb tile mirrors the lights state too */
     lv_obj_set_style_bg_color(tile_objs[1],
         lv_color_hex(dark ? 0x17150b : ICONS[1].color), 0);
