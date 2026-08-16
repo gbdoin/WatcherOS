@@ -915,11 +915,14 @@ void tama_ui_build(void)
                                   LV_ALIGN_CENTER, 0, -128);
     game_num = label_create(game_scr, F48, TXT_HEX, LV_ALIGN_CENTER, 0, -55);
     for (int i = 0; i < 2; i++) {
-        game_opts[i] = card_create(game_scr, ICONS[2].color, 144, 54,
-                                   i == 0 ? -78 : 78, 45);
+        /* color = meaning, for pre-readers: LOWER warm orange + down arrow,
+         * HIGHER green + up arrow (up = growing) */
+        game_opts[i] = card_create(game_scr, i == 0 ? 0x8a4a1e : 0x2e5c2e,
+                                   144, 54, i == 0 ? -78 : 78, 45);
         game_opt_lbls[i] = label_create(game_opts[i], F28, TXT_HEX,
                                         LV_ALIGN_CENTER, 0, 0);
-        lv_label_set_text(game_opt_lbls[i], i == 0 ? "LOWER" : "HIGHER");
+        lv_label_set_text(game_opt_lbls[i],
+            i == 0 ? LV_SYMBOL_DOWN " LOWER" : LV_SYMBOL_UP " HIGHER");
     }
     for (int i = 0; i < GAME_ROUNDS; i++) {
         game_dots[i] = lv_obj_create(game_scr);
